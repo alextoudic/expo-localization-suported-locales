@@ -1,0 +1,410 @@
+diff --git a/node_modules/expo-localization/plugin/build/utils.d.ts b/plugin/build/utils.d.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..46bd196b320fddc2fb8afc69ac73ead13bfced09
+--- /dev/null
++++ b/plugin/build/utils.d.ts
+@@ -0,0 +1,8 @@
++export declare function appendContentsInsideDeclarationBlock(srcContents: string, declaration: string, insertion: string): string;
++type LeftBrackets = ['(', '{'];
++type RightBrackets = [')', '}'];
++type LeftBracket = LeftBrackets[number];
++type RightBracket = RightBrackets[number];
++type Bracket = LeftBracket | RightBracket;
++export declare function findMatchingBracketPosition(contents: string, bracket: Bracket, offset?: number): number;
++export {};
+diff --git a/node_modules/expo-localization/plugin/build/utils.js b/plugin/build/utils.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..d9d6c0a7fca1bf1a7c967b403f262eb3600771bc
+--- /dev/null
++++ b/plugin/build/utils.js
+@@ -0,0 +1,86 @@
++"use strict";
++Object.defineProperty(exports, "__esModule", { value: true });
++exports.appendContentsInsideDeclarationBlock = appendContentsInsideDeclarationBlock;
++exports.findMatchingBracketPosition = findMatchingBracketPosition;
++function appendContentsInsideDeclarationBlock(srcContents, declaration, insertion) {
++    const start = srcContents.search(new RegExp(`\\s*${declaration}.*?[\\(\\{]`));
++    if (start < 0) {
++        throw new Error(`Unable to find code block - declaration[${declaration}]`);
++    }
++    const end = findMatchingBracketPosition(srcContents, '{', start);
++    return insertContentsAtOffset(srcContents, insertion, end);
++}
++function insertContentsAtOffset(srcContents, insertion, offset) {
++    const srcContentsLength = srcContents.length;
++    if (offset < 0 || offset > srcContentsLength) {
++        throw new Error('Invalid parameters.');
++    }
++    if (offset === 0) {
++        return `${insertion}${srcContents}`;
++    }
++    else if (offset === srcContentsLength) {
++        return `${srcContents}${insertion}`;
++    }
++    const prefix = srcContents.substring(0, offset);
++    const suffix = srcContents.substring(offset);
++    return `${prefix}${insertion}${suffix}`;
++}
++function findMatchingBracketPosition(contents, bracket, offset = 0) {
++    // search first occurrence of `bracket`
++    const firstBracketPos = contents.indexOf(bracket, offset);
++    if (firstBracketPos < 0) {
++        return -1;
++    }
++    let stackCounter = 0;
++    const matchingBracket = getMatchingBracket(bracket);
++    if (isLeftBracket(bracket)) {
++        const contentsLength = contents.length;
++        // search forward
++        for (let i = firstBracketPos + 1; i < contentsLength; ++i) {
++            const c = contents[i];
++            if (c === bracket) {
++                stackCounter += 1;
++            }
++            else if (c === matchingBracket) {
++                if (stackCounter === 0) {
++                    return i;
++                }
++                stackCounter -= 1;
++            }
++        }
++    }
++    else {
++        // search backward
++        for (let i = firstBracketPos - 1; i >= 0; --i) {
++            const c = contents[i];
++            if (c === bracket) {
++                stackCounter += 1;
++            }
++            else if (c === matchingBracket) {
++                if (stackCounter === 0) {
++                    return i;
++                }
++                stackCounter -= 1;
++            }
++        }
++    }
++    return -1;
++}
++function isLeftBracket(bracket) {
++    const leftBracketList = ['(', '{'];
++    return leftBracketList.includes(bracket);
++}
++function getMatchingBracket(bracket) {
++    switch (bracket) {
++        case '(':
++            return ')';
++        case ')':
++            return '(';
++        case '{':
++            return '}';
++        case '}':
++            return '{';
++        default:
++            throw new Error(`Unsupported bracket - ${bracket}`);
++    }
++}
+diff --git a/plugin/build/withExpoLocalization.d.ts b/plugin/build/withExpoLocalization.d.ts
+index 0acc3d58e00f740f70e62719b5cfd7fe4bb04da0..da503127b2b4feb86ba36421dfc098692572cad9 100644
+--- a/plugin/build/withExpoLocalization.d.ts
++++ b/plugin/build/withExpoLocalization.d.ts
+@@ -3,6 +3,7 @@ type ConfigPluginProps = {
+     supportsRTL?: boolean;
+     forcesRTL?: boolean;
+     allowDynamicLocaleChangesAndroid?: boolean;
++    supportedLocales?: string[];
+ };
+ declare function withExpoLocalization(config: ExpoConfig, data?: ConfigPluginProps): ExpoConfig;
+ export default withExpoLocalization;
+diff --git a/plugin/build/withExpoLocalization.js b/plugin/build/withExpoLocalization.js
+index eea6b69ac2f237dda0f5e745b5c5e5eab844f77f..bc6421d7bbc04aaef3cd693a29b4a67260254bf1 100644
+--- a/plugin/build/withExpoLocalization.js
++++ b/plugin/build/withExpoLocalization.js
+@@ -1,9 +1,17 @@
+ "use strict";
++var __importDefault = (this && this.__importDefault) || function (mod) {
++    return (mod && mod.__esModule) ? mod : { "default": mod };
++};
+ Object.defineProperty(exports, "__esModule", { value: true });
+ const config_plugins_1 = require("expo/config-plugins");
++const fs_1 = __importDefault(require("fs"));
++const path_1 = __importDefault(require("path"));
++const utils_1 = require("./utils");
+ function withExpoLocalizationIos(config, data) {
+     const mergedConfig = { ...config.extra, ...data };
+-    if (mergedConfig?.supportsRTL == null && mergedConfig?.forcesRTL == null)
++    if (mergedConfig?.supportsRTL == null &&
++        mergedConfig?.forcesRTL == null &&
++        mergedConfig?.supportedLocales == null)
+         return config;
+     if (!config.ios)
+         config.ios = {};
+@@ -15,6 +23,9 @@ function withExpoLocalizationIos(config, data) {
+     if (mergedConfig?.forcesRTL != null) {
+         config.ios.infoPlist.ExpoLocalization_forcesRTL = mergedConfig?.forcesRTL;
+     }
++    if (mergedConfig?.supportedLocales != null) {
++        config.ios.infoPlist.CFBundleLocalizations = mergedConfig?.supportedLocales;
++    }
+     return config;
+ }
+ function withExpoLocalizationAndroid(config, data) {
+@@ -30,8 +41,43 @@ function withExpoLocalizationAndroid(config, data) {
+             return config;
+         });
+     }
++    const mergedConfig = { ...config.extra, ...data };
++    const supportedLocales = mergedConfig?.supportedLocales;
++    if (supportedLocales) {
++        config = (0, config_plugins_1.withDangerousMod)(config, [
++            'android',
++            (config) => {
++                const projectRootPath = path_1.default.join(config.modRequest.platformProjectRoot);
++                const folder = path_1.default.join(projectRootPath, 'app/src/main/res/xml');
++                fs_1.default.mkdirSync(folder, { recursive: true });
++                fs_1.default.writeFileSync(path_1.default.join(folder, 'locales_config.xml'), [
++                    '<?xml version="1.0" encoding="utf-8"?>',
++                    '<locale-config xmlns:android="http://schemas.android.com/apk/res/android">',
++                    ...supportedLocales.map((locale) => `  <locale android:name="${locale}"/>`),
++                    '</locale-config>',
++                ].join('\n'));
++                return config;
++            },
++        ]);
++        config = (0, config_plugins_1.withAndroidManifest)(config, (config) => {
++            const mainApplication = config_plugins_1.AndroidConfig.Manifest.getMainApplicationOrThrow(config.modResults);
++            mainApplication.$ = {
++                ...mainApplication.$,
++                'android:localeConfig': '@xml/locales_config',
++            };
++            return config;
++        });
++        config = (0, config_plugins_1.withAppBuildGradle)(config, (config) => {
++            if (config.modResults.language === 'groovy') {
++                config.modResults.contents = (0, utils_1.appendContentsInsideDeclarationBlock)(config.modResults.contents, 'defaultConfig', `    resourceConfigurations += [${supportedLocales.map((lang) => `"${lang}"`).join(', ')}]\n    `);
++            }
++            else {
++                config_plugins_1.WarningAggregator.addWarningAndroid('expo-localization supportedLocales', `Cannot automatically configure app build.gradle if it's not groovy`);
++            }
++            return config;
++        });
++    }
+     return (0, config_plugins_1.withStringsXml)(config, (config) => {
+-        const mergedConfig = { ...config.extra, ...data };
+         if (mergedConfig?.supportsRTL != null) {
+             config.modResults = config_plugins_1.AndroidConfig.Strings.setStringItem([
+                 {
+diff --git a/node_modules/expo-localization/plugin/src/utils.ts b/plugin/src/utils.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..b53ef019b18f0597b664e075c4cf80775fad5bab
+--- /dev/null
++++ b/plugin/src/utils.ts
+@@ -0,0 +1,101 @@
++export function appendContentsInsideDeclarationBlock(
++  srcContents: string,
++  declaration: string,
++  insertion: string
++): string {
++  const start = srcContents.search(new RegExp(`\\s*${declaration}.*?[\\(\\{]`));
++  if (start < 0) {
++    throw new Error(`Unable to find code block - declaration[${declaration}]`);
++  }
++  const end = findMatchingBracketPosition(srcContents, '{', start);
++  return insertContentsAtOffset(srcContents, insertion, end);
++}
++
++function insertContentsAtOffset(srcContents: string, insertion: string, offset: number): string {
++  const srcContentsLength = srcContents.length;
++  if (offset < 0 || offset > srcContentsLength) {
++    throw new Error('Invalid parameters.');
++  }
++  if (offset === 0) {
++    return `${insertion}${srcContents}`;
++  } else if (offset === srcContentsLength) {
++    return `${srcContents}${insertion}`;
++  }
++
++  const prefix = srcContents.substring(0, offset);
++  const suffix = srcContents.substring(offset);
++  return `${prefix}${insertion}${suffix}`;
++}
++
++type LeftBrackets = ['(', '{'];
++type RightBrackets = [')', '}'];
++
++type LeftBracket = LeftBrackets[number];
++type RightBracket = RightBrackets[number];
++type Bracket = LeftBracket | RightBracket;
++
++export function findMatchingBracketPosition(
++  contents: string,
++  bracket: Bracket,
++  offset: number = 0
++): number {
++  // search first occurrence of `bracket`
++  const firstBracketPos = contents.indexOf(bracket, offset);
++  if (firstBracketPos < 0) {
++    return -1;
++  }
++
++  let stackCounter = 0;
++  const matchingBracket = getMatchingBracket(bracket);
++
++  if (isLeftBracket(bracket)) {
++    const contentsLength = contents.length;
++    // search forward
++    for (let i = firstBracketPos + 1; i < contentsLength; ++i) {
++      const c = contents[i];
++      if (c === bracket) {
++        stackCounter += 1;
++      } else if (c === matchingBracket) {
++        if (stackCounter === 0) {
++          return i;
++        }
++        stackCounter -= 1;
++      }
++    }
++  } else {
++    // search backward
++    for (let i = firstBracketPos - 1; i >= 0; --i) {
++      const c = contents[i];
++      if (c === bracket) {
++        stackCounter += 1;
++      } else if (c === matchingBracket) {
++        if (stackCounter === 0) {
++          return i;
++        }
++        stackCounter -= 1;
++      }
++    }
++  }
++
++  return -1;
++}
++
++function isLeftBracket(bracket: Bracket): boolean {
++  const leftBracketList: readonly Bracket[] = ['(', '{'];
++  return leftBracketList.includes(bracket);
++}
++
++function getMatchingBracket(bracket: Bracket): Bracket {
++  switch (bracket) {
++    case '(':
++      return ')';
++    case ')':
++      return '(';
++    case '{':
++      return '}';
++    case '}':
++      return '{';
++    default:
++      throw new Error(`Unsupported bracket - ${bracket}`);
++  }
++}
+diff --git a/plugin/src/withExpoLocalization.ts b/plugin/src/withExpoLocalization.ts
+index 19dbb7aa9b96cb12a50dc8d7117a0f775a134c95..1a8f93cbb9edf13f766210d7adfe6968b897d07b 100644
+--- a/plugin/src/withExpoLocalization.ts
++++ b/plugin/src/withExpoLocalization.ts
+@@ -1,20 +1,32 @@
+ import type { ExpoConfig } from 'expo/config';
+ import {
+   AndroidConfig,
++  WarningAggregator,
+   withAndroidManifest,
++  withAppBuildGradle,
++  withDangerousMod,
+   withPlugins,
+   withStringsXml,
+ } from 'expo/config-plugins';
++import fs from 'fs';
++import path from 'path';
++import { appendContentsInsideDeclarationBlock } from './utils';
+ 
+ type ConfigPluginProps = {
+   supportsRTL?: boolean;
+   forcesRTL?: boolean;
+   allowDynamicLocaleChangesAndroid?: boolean;
++  supportedLocales?: string[];
+ };
+ 
+ function withExpoLocalizationIos(config: ExpoConfig, data: ConfigPluginProps) {
+   const mergedConfig = { ...config.extra, ...data };
+-  if (mergedConfig?.supportsRTL == null && mergedConfig?.forcesRTL == null) return config;
++  if (
++    mergedConfig?.supportsRTL == null &&
++    mergedConfig?.forcesRTL == null &&
++    mergedConfig?.supportedLocales == null
++  )
++    return config;
+   if (!config.ios) config.ios = {};
+   if (!config.ios.infoPlist) config.ios.infoPlist = {};
+   if (mergedConfig?.supportsRTL != null) {
+@@ -23,6 +35,9 @@ function withExpoLocalizationIos(config: ExpoConfig, data: ConfigPluginProps) {
+   if (mergedConfig?.forcesRTL != null) {
+     config.ios.infoPlist.ExpoLocalization_forcesRTL = mergedConfig?.forcesRTL;
+   }
++  if (mergedConfig?.supportedLocales != null) {
++    config.ios.infoPlist.CFBundleLocalizations = mergedConfig?.supportedLocales;
++  }
+   return config;
+ }
+ 
+@@ -39,8 +54,57 @@ function withExpoLocalizationAndroid(config: ExpoConfig, data: ConfigPluginProps
+       return config;
+     });
+   }
++  const mergedConfig = { ...config.extra, ...data };
++  const supportedLocales = mergedConfig?.supportedLocales;
++  if (supportedLocales) {
++    config = withDangerousMod(config, [
++      'android',
++      (config) => {
++        const projectRootPath = path.join(config.modRequest.platformProjectRoot);
++        const folder = path.join(projectRootPath, 'app/src/main/res/xml');
++
++        fs.mkdirSync(folder, { recursive: true });
++        fs.writeFileSync(
++          path.join(folder, 'locales_config.xml'),
++          [
++            '<?xml version="1.0" encoding="utf-8"?>',
++            '<locale-config xmlns:android="http://schemas.android.com/apk/res/android">',
++            ...supportedLocales.map((locale) => `  <locale android:name="${locale}"/>`),
++            '</locale-config>',
++          ].join('\n')
++        );
++
++        return config;
++      },
++    ]);
++    config = withAndroidManifest(config, (config) => {
++      const mainApplication = AndroidConfig.Manifest.getMainApplicationOrThrow(config.modResults);
++
++      mainApplication.$ = {
++        ...mainApplication.$,
++        'android:localeConfig': '@xml/locales_config',
++      };
++
++      return config;
++    });
++    config = withAppBuildGradle(config, (config) => {
++      if (config.modResults.language === 'groovy') {
++        config.modResults.contents = appendContentsInsideDeclarationBlock(
++          config.modResults.contents,
++          'defaultConfig',
++          `    resourceConfigurations += [${supportedLocales.map((lang) => `"${lang}"`).join(', ')}]\n    `
++        );
++      } else {
++        WarningAggregator.addWarningAndroid(
++          'expo-localization supportedLocales',
++          `Cannot automatically configure app build.gradle if it's not groovy`
++        );
++      }
++
++      return config;
++    });
++  }
+   return withStringsXml(config, (config) => {
+-    const mergedConfig = { ...config.extra, ...data };
+     if (mergedConfig?.supportsRTL != null) {
+       config.modResults = AndroidConfig.Strings.setStringItem(
+         [
